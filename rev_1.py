@@ -45,4 +45,5 @@ print "There are", n_elements, "possible CME events (positive class)."
 # the following output is in the Stanford Digital Repository:
 print "Class, Peak Time, Active Region Number, Directly Linked Event(s)"
 for i in range(len(events)):
-    print events['Class'].iloc[i],events['Peak Time'].iloc[i],events['Active Region Number'].iloc[i],events['Directly Linked Event(s)'].iloc[i]
+    print events['Class'].iloc[i],events['Peak Time'].iloc[i],events['Active Region Number'].iloc[i],
+    events['Directly Linked Event(s)'].iloc[i]
