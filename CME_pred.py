@@ -63,6 +63,8 @@ for i in range(len(events)):
 #To do this, we'll use the instr.goes.get_goes_event_list() function in SunPy
 #So let's first convert all our times into datetime_objects.
 
+#Positive class will be flaring active regions that did produce a CME.
+#Negative class will be flaring active regions that did not produce a CME. 
 def parse_tai_string(tstr):
     year   = int(tstr[:4])
     month  = int(tstr[5:7])
@@ -265,4 +267,266 @@ print "HARPNUM, NOAA Number, Class, Peak Time, USFLUX, MEANGBT, MEANJZH, MEANPOT
 for i in range(len(CME_data)):
     print positive_class[i][0], positive_class[i][1], positive_class[i][2], positive_class[i][3],positive_result[0][i][0],positive_result[0][i][1],positive_result[0][i][2],positive_result[0][i][3],positive_result[0][i][4],positive_result[0][i][5],positive_result[0][i][6],positive_result[0][i][7],positive_result[0][i][8],positive_result[0][i][9],positive_result[0][i][10],positive_result[0][i][11],positive_result[0][i][12],positive_result[0][i][13],positive_result[0][i][14],positive_result[0][i][15],positive_result[0][i][16],positive_result[0][i][17]
 
+####################
+# Negative class
+####################
+# select peak times that belong to both classes
+all_peak_times = np.array([(listofresults[i]['peak_time']) for i in range(len(listofresults))])
 
+#select peak times that belong to the positive class
+positive_peak_times = np.array([(parse_tai_string(positive_class[i][3])) + timedelta(hours=timedelayvariable) for i in range(len(positive_class))])
+
+negative_class_possibilities = [] 
+counter_positive = 0
+counter_negative = 0
+for i in range(len(listofresults)):
+    if (listofresults[i]['noaa_active_region'] < 10000):
+        continue
+    this_peak_time = all_peak_times[i]
+    max_peak_time = this_peak_time + timedelta(0,0,0,0,6)
+    min_peak_time = this_peak_time - timedelta(0,0,0,0,6)
+    match_peak_times = np.where((np.logical_and(positive_peak_times <= max_peak_time, positive_peak_times >= min_peak_time)) == True)
+    if (match_peak_times[0].shape[0] == 1):
+        counter_positive +=1
+    else:
+        counter_negative += 1
+        this_instance = [listofresults[i]['noaa_active_region'],listofresults[i]['goes_class'],listofresults[i]['peak_time']]
+        negative_class_possibilities.append(this_instance)
+print "There are", counter_positive,"maximal events in the positive class (the true number may be less than this)."
+print "There are",counter_negative,"possible events in the negative class."
+
+#compute times that are one day before the flare peak time: 
+#create an array of datetime objects 
+x = np.array([negative_class_possibilities[i][2] for i in range(len(negative_class_possibilities))])
+t_rec = create_tai_string(x)
+n_elements = len(t_rec)
+
+#query the JSOC database to see if these data are present:
+listofactiveregions = list(negative_class_possibilities[i][0] for i in range(n_elements))
+listofgoesclasses = list(negative_class_possibilities[i][1] for i in range(n_elements))
+
+negative_result = get_the_jsoc_data()
+
+#events associated with the negative class:
+no_CME_data = negative_result[0]
+negative_class = negative_result[1]
+# the following output is in the Stanford Digital Repository:
+print "There are", len(no_CME_data), "no-CME events (negative class)."
+print "HARPNUM, NOAA Number, Class, Peak Time, USFLUX, MEANGBT, MEANJZH, MEANPOT, SHRGT45, TOTUSJH, MEANGBH, MEANALP, MEANGAM, MEANGBZ, MEANJZD, TOTUSJZ, SAVNCPP, TOTPOT, MEANSHR, AREA_ACR, R_VALUE, ABSNJZH"
+for i in range(len(no_CME_data)):
+    print negative_class[i][0], negative_class[i][1], negative_class[i][2], negative_class[i][3],negative_result[0][i][0],negative_result[0][i][1],negative_result[0][i][2],negative_result[0][i][3],negative_result[0][i][4],negative_result[0][i][5],negative_result[0][i][6],negative_result[0][i][7],negative_result[0][i][8],negative_result[0][i][9],negative_result[0][i][10],negative_result[0][i][11],negative_result[0][i][12],negative_result[0][i][13],negative_result[0][i][14],negative_result[0][i][15],negative_result[0][i][16],negative_result[0][i][17]
+    
+###################
+#feature selection#
+###################
+
+def create_flare_class(type_of_class):
+    total_flare_class = []
+    for i in range(len(type_of_class)):
+        magnitude = float(type_of_class[i][2][1:4])
+        flareclass = type_of_class[i][2][0]
+        if (flareclass == 'M'):
+            factor = 1.0
+        if (flareclass == 'X'):
+            factor = 10.0
+        total_flare_class.append(factor*magnitude)
+    return total_flare_class
+
+positive_flare_class = np.array(create_flare_class(positive_class))
+negative_flare_class = np.array(create_flare_class(negative_class))
+
+CME_data = np.array(CME_data)
+no_CME_data = np.array(no_CME_data)
+
+CME_data = np.column_stack((CME_data, positive_flare_class))
+no_CME_data = np.column_stack((no_CME_data, negative_flare_class))
+print "Now we have", CME_data.shape[1], "features."
+
+# how many flares associated with CME?
+def normalize_the_data(flare_data):
+    flare_data = np.array(flare_data)
+    n_elements = flare_data.shape[0]
+    for j in range(flare_data.shape[1]):
+        standard_deviation_of_this_feature = np.std(flare_data[:,j])
+        median_of_this_feature = np.median(flare_data[:,j])
+        for i in range(n_elements):
+            flare_data[i,j] = (flare_data[i,j] - median_of_this_feature) / (standard_deviation_of_this_feature)
+    return flare_data
+
+no_CME_data = normalize_the_data(no_CME_data)
+CME_data = normalize_the_data(CME_data)
+
+print "There are", no_CME_data.shape[0], "flares with no associated CMEs."
+print "There are", CME_data.shape[0], "flares with associated CMEs."
+
+#Feature for the active regions that both flared and produced a CME (green)
+# and for the active regions that flared but did not produce a CME (red):
+
+sharps = ['Total unsigned flux', 'Mean gradient of total field', 
+'Mean current helicity (Bz contribution)', 'Mean photospheric magnetic free energy',
+'Fraction of Area with Shear > 45 deg', 'Total unsigned current helicity',
+'Mean gradient of horizontal field', 'Mean characteristic twist parameter, alpha',
+'Mean angle of field from radial', 'Mean gradient of vertical field', 
+'Mean vertical current density', 'Total unsigned vertical current', 
+'Sum of the modulus of the net current per polarity',
+'Total photospheric magnetic free energy density', 'Mean shear angle',
+'Area of strong field pixels in the active region', 'Sum of flux near polarity inversion line',
+'Absolute value of the net current helicity','Flare index']
+
+i=6
+
+# For the positive class (green)
+mu_fl = np.mean(CME_data[:,i])
+sigma_fl = np.std(CME_data[:,i])
+num_bins = 15
+n_fl, bins_fl, patches_fl = plt.hist(CME_data[:,i], num_bins, normed=1, facecolor='green', alpha=0.5)
+y_fl = mlab.normpdf(bins_fl, mu_fl, sigma_fl)
+plt.plot(bins_fl, y_fl, 'g--',label='positive class')
+
+# For the negative class (red)
+mu_nofl = np.mean(no_CME_data[:,i])
+sigma_nofl = np.std(no_CME_data[:,i])
+n_nofl, bins_nofl, patches_nofl = plt.hist(no_CME_data[:,i], num_bins, normed=1, facecolor='red', alpha=0.5)
+y_nofl = mlab.normpdf(bins_nofl, mu_nofl, sigma_nofl)
+plt.plot(bins_nofl, y_nofl, 'r--',label='negative class')
+
+text_style = dict(fontsize=16, fontdict={'family': 'monospace'})
+plt.xlabel('Normalized '+sharps[i],**text_style)
+plt.ylabel('Number (normalized)', labelpad=20,**text_style)
+fig = plt.gcf()
+fig.set_size_inches(10,5)
+fig.savefig('fscore_tmp.png',bbox_inches='tight')
+legend = plt.legend(loc='upper right', fontsize=12, framealpha=0.0,title='')
+legend.get_frame().set_linewidth(0.0)
+mpld3.enable_notebook()
+
+#Computing the Univariate F-score for feature selection
+from sklearn.feature_selection import SelectKBest, f_classif  # import the feature selection method
+N_features = 19                                               # select the number of features 
+Nfl = CME_data.shape[0]; Nnofl = no_CME_data.shape[0]
+yfl = np.ones(Nfl); ynofl = np.zeros(Nnofl)
+selector = SelectKBest(f_classif, k=N_features)               # k is the number of features
+selector.fit(np.concatenate((CME_data,no_CME_data),axis=0), np.concatenate((yfl, ynofl), axis=0))
+scores=selector.scores_
+print scores
+
+#interpret the scores in plot:
+mpld3.disable_notebook()
+plt.clf()
+order = np.argsort(scores)
+orderedsharps = [sharps[i] for i in order]
+y_pos2 = np.arange(19)
+plt.barh(y_pos2, sorted(scores/np.max(scores)), align='center')
+plt.ylim((-1, 19))
+plt.yticks(y_pos2, orderedsharps)
+plt.xlabel('Normalized Fisher Score', fontsize=15)
+plt.title('Ranking of SHARP features', fontsize=15)
+fig = plt.gcf()
+fig.set_size_inches(8,10)
+fig.savefig('sharp_ranking_48hours.png',bbox_inches='tight')
+plt.show()
+
+#Pearson linear correlation coefficients
+xdata = np.concatenate((CME_data, no_CME_data), axis=0)
+ydata = np.concatenate((np.ones(Nfl), np.zeros(Nnofl)), axis=0)
+
+for i in range(len(sharps)):
+    for j in range(len(sharps)):
+        x = pearse(xdata[:,i],xdata[:,j])
+        print "The correlation between",sharps[i],"and",sharps[j],"is",x[0],"."
+
+#how many features?
+CME_data = CME_data[:,0:18]
+no_CME_data = no_CME_data[:,0:18]
+print "Now we are back to", CME_data.shape[1], "features."
+
+#run the support vector machine on the data
+number_of_examples = Nfl + Nnofl
+C = 4.0; gamma = 0.075; class_weight = {1:6.5}
+clf = svm.SVC(C=C, gamma=gamma, kernel='rbf', class_weight=class_weight, cache_size=500, max_iter=-1, shrinking=True, tol=1e-8)
+
+#performance ?
+def confusion_table(pred, labels):
+    """
+    computes the number of TP, TN, FP, FN events given the arrays with predictions and true labels
+    and returns the true skill score
+  
+    Args:
+    pred: np array with predictions (1 for flare, 0 for nonflare)
+    labels: np array with true labels (1 for flare, 0 for nonflare)
+  
+    Returns: true negative, false positive, true positive, false negative
+    """  
+    Nobs = len(pred)
+    TN = 0.; TP = 0.; FP = 0.; FN = 0.
+    for i in range(Nobs):
+        if (pred[i] == 0 and labels[i] == 0):
+            TN += 1
+        elif (pred[i] == 1 and labels[i] == 0):
+            FP += 1
+        elif (pred[i] == 1 and labels[i] == 1):
+            TP += 1 
+        elif (pred[i] == 0 and labels[i] == 1):
+            FN += 1
+        else:
+            print "Error! Observation could not be classified."
+    return TN,FP,TP,FN
+
+#True Skill Score (TSS)
+array_of_avg_TSS = np.ndarray([50])
+array_of_std_TSS = np.ndarray([50])
+pred = -np.ones(number_of_examples)
+xdata = np.concatenate((CME_data, no_CME_data), axis=0)
+ydata = np.concatenate((np.ones(Nfl), np.zeros(Nnofl)), axis=0)
+shuffle_index = np.arange(number_of_examples)                  # shuffle the data indices 
+np.random.shuffle(shuffle_index)
+ydata_shuffled = ydata[shuffle_index]
+xdata_shuffled = xdata[shuffle_index,:]
+for k in range(2,52):
+    skf = cross_validation.StratifiedKFold(ydata_shuffled, n_folds=k)
+    these_TSS_for_this_k = []
+    for j, i in skf: 
+        train = xdata_shuffled[j]; test = xdata_shuffled[i]     # test is examples in testing set; train is examples in training set
+        ytrain = ydata_shuffled[j]; ytest = ydata_shuffled[i]   # ytest is labels in testing set; ytrain is labels in training set
+        clf.fit(train, ytrain)
+        pred[i] = clf.predict(test)
+        TN,FP,TP,FN = confusion_table(pred[i], ydata_shuffled[i])
+        if (((TP+FN) == 0.0) or (FP+TN)==0.0):
+            these_TSS_for_this_k.append(-1.0)
+            continue
+        else:
+            these_TSS_for_this_k.append(TP/(TP+FN) - FP/(FP+TN))
+    TSS_k = np.array(these_TSS_for_this_k)
+    array_of_avg_TSS[k-2]=np.mean(TSS_k)
+    array_of_std_TSS[k-2]=np.std(TSS_k)
+    
+#plot mean TSS
+fig, ax = plt.subplots(figsize=(10,8))      # define the size of the figure
+orangered = (1.0,0.27,0,1.0)                # create an orange-red color
+cornblue  = (0.39,0.58,0.93,1.0)            # create a cornflower-blue color
+
+# define some style elements
+marker_style_red  = dict(linestyle='', markersize=8, fillstyle='full',color=orangered,markeredgecolor=orangered)
+marker_style_blue = dict(linestyle='', markersize=8, fillstyle='full',color=cornblue,markeredgecolor=cornblue)
+text_style = dict(fontsize=16, fontdict={'family': 'monospace'})
+
+# ascribe the data to the axes
+k = np.arange(50)+2
+for i in range(50):
+    if (array_of_avg_TSS[i] > array_of_std_TSS[i]):
+        ax.errorbar(k[i], array_of_avg_TSS[i], yerr=array_of_std_TSS[i], linestyle='',color=orangered)
+        ax.plot(k[i], array_of_avg_TSS[i],'o',**marker_style_red)
+    if (array_of_avg_TSS[i] <= array_of_std_TSS[i]):
+        ax.errorbar(k[i], array_of_avg_TSS[i], yerr=array_of_std_TSS[i], linestyle='',color=cornblue)
+        ax.plot(k[i], array_of_avg_TSS[i],'o',**marker_style_blue)
+plt.xlim(xmax = 52, xmin = 0)
+
+# label the axes and the plot
+ax.set_xlabel('k',**text_style)
+ax.set_ylabel('TSS',labelpad=20,**text_style)
+plt.title(r'TSS per k using stratified k-fold cross-validation',**text_style)
+fig = plt.gcf()
+fig.set_size_inches(10,5)
+mpld3.enable_notebook()
+
+print "The TSS equals",array_of_avg_TSS[8],"plus or minus",array_of_std_TSS[8]
